@@ -1,0 +1,12 @@
+[Unit]
+Description=Periodic desktop notification daemon
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/notifier.sh __daemon__
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

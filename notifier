@@ -1,0 +1,315 @@
+#!/usr/bin/env bash
+#
+# notifier.sh - Periodic desktop notification daemon for Linux Mint (Cinnamon/X11/Wayland via notify-send)
+#
+# Usage:
+#   notifier.sh start [json-file]
+#   notifier.sh exit
+#   notifier.sh status
+#
+# Config persists in ~/.config/notifier/notifier.json so that systemd (on boot)
+# and manual `start` calls both pick up the same settings.
+
+set -euo pipefail
+
+APP_NAME="notifier"
+CONFIG_DIR="${HOME}/.config/${APP_NAME}"
+CONFIG_FILE="${CONFIG_DIR}/notifier.json"
+RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp}"
+PID_FILE="${RUNTIME_DIR}/${APP_NAME}.pid"
+LOG_FILE="${CONFIG_DIR}/notifier.log"
+JSONFILE=""
+
+# ---- defaults (overridden by config file / CLI flags) ----
+DEFAULT_INTERVAL=3600          # seconds between notifications (1 hour)
+DEFAULT_TITLE="Reminder"
+DEFAULT_MESSAGE="This is your periodic reminder."
+DEFAULT_URGENCY="normal"       # low | normal | critical
+DEFAULT_ICON="dialog-information"
+DEFAULT_SOUND=""
+
+
+mkdir -p "${CONFIG_DIR}"
+
+usage() {
+    cat <<EOF
+${APP_NAME} - periodic desktop notifications
+
+Usage:
+  $(basename "$0") start [json-file]   Start the notification daemon
+  $(basename "$0") exit                Stop the running daemon
+  $(basename "$0") status              Show whether the daemon is running
+  $(basename "$0") logs                Show app logs
+
+
+Options for 'start':
+  -h             usage guide
+
+Json Format Example
+
+    {
+        "interval":xxxx (default: "${DEFAULT_INTERVAL}"),
+        "messages":[
+            {
+                "message":"xxxx" (default: "${DEFAULT_MESSAGE}"),
+                "title":"xxxx" (default: "${DEFAULT_TITLE}"),
+                "urgency":"xxxx" (default: "${DEFAULT_URGENCY}"),
+                "sound":"Path/to/mp3" (default: "cinnamon default sound")
+            },{
+                ...
+            }
+        ]
+    }
+
+Warning :   
+        file name must be exactly "notifier.json"
+        if you have a stored notifier.json you can just run notifier start
+
+Examples:
+  $(basename "$0") start  notifier.json
+  $(basename "$0") exit
+EOF
+}
+
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "${LOG_FILE}"
+}
+load_config() {
+    if [[ -e "$CONFIG_FILE" ]]; then
+        JSONFILE=$CONFIG_FILE
+    fi
+}
+save_config() {
+
+    if [[ -f "$1" ]]; then
+        cp "$1" "$CONFIG_DIR" 
+        JSONFILE="$CONFIG_FILE"
+    fi
+}
+
+
+is_running() {
+    if [[ -f "${PID_FILE}" ]]; then
+        local pid
+        pid="$(cat "${PID_FILE}")"
+        if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null; then
+            return 0
+        fi
+    fi
+    return 1
+}
+
+# Resolve the DBUS session bus + DISPLAY so notify-send works
+# both from a terminal and from a systemd --user unit at boot.
+setup_display_env() {
+    export DISPLAY="${DISPLAY:-:0}"
+    if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
+        local uid
+        uid="$(id -u)"
+        if [[ -S "/run/user/${uid}/bus" ]]; then
+            export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${uid}/bus"
+        fi
+    fi
+}
+
+play_custom_sound() {
+    local sound_path="$1"
+    local prev_state
+    SOUND_SCHEMA="org.cinnamon.sounds"
+    SOUND_KEY="notification-enabled"
+
+    if [[ ! -f "${sound_path}" ]]; then
+        log "WARNING: sound file not found: ${sound_path} (skipping custom sound)"
+        return
+    fi
+ 
+    local player=""
+    if command -v paplay >/dev/null 2>&1; then
+        player="paplay"
+    elif command -v aplay >/dev/null 2>&1; then
+        player="aplay"
+    else
+        log "WARNING: neither paplay nor aplay found; cannot play custom sound"
+        return
+    fi
+ 
+    prev_state="$(gsettings get "${SOUND_SCHEMA}" "${SOUND_KEY}" 2>/dev/null || echo "true")"
+ 
+    # Always restore the original mute state, even if the player fails.
+    gsettings set "${SOUND_SCHEMA}" "${SOUND_KEY}" false 2>/dev/null || true
+    "${player}" "${sound_path}" >> "${LOG_FILE}" || log "WARNING: ${player} failed to play ${sound_path}"
+    # sleep 2
+    gsettings set "${SOUND_SCHEMA}" "${SOUND_KEY}" "${prev_state}" 2>/dev/null || true
+}
+
+
+daemon_loop() {
+    setup_display_env
+    log "Daemon started at date $(date '+%Y-%m-%d %H:%M:%S')"
+    # Trap termination signals for clean shutdown/logging
+    trap "log \"Daemon stopped\"; exit 0" SIGTERM SIGINT
+      
+    while true; do
+        local MESSAGES_LEN=$(jq '.messages | length' "$JSONFILE")
+        local random_int=$(( RANDOM % MESSAGES_LEN ))
+        local element=$(jq --argjson random_int "$random_int" '.messages[$random_int]' "$JSONFILE")
+        local interval=$(jq -r ".interval" "$JSONFILE")
+        if [[ $interval == "null" ]]; then
+            interval=$DEFAULT_INTERVAL
+        fi
+        local message=$(echo "$element" | jq -r ".message" )
+        if [[ "$message" == "null" ]]; then
+            message=$DEFAULT_MESSAGE
+        fi
+        local title=$(echo "$element" | jq -r ".title" )
+        if [[ "$title" == "null" ]]; then
+            title=$DEFAULT_TITLE
+        fi
+        local urgency=$(echo "$element" | jq -r ".urgency" )
+        if [[ $urgency == "null" ]]; then
+            urgency=$DEFAULT_URGENCY
+        fi
+        local sound=$(echo "$element" | jq -r ".sound")
+        if [[ "$sound" == "null" ]]; then
+            sound="$DEFAULT_SOUND"
+        fi
+        if command -v notify-send >/dev/null 2>&1; then
+            notify-send -u "${urgency}" "${title}" "${message}"  \
+                || log "notify-send failed (no display/session?)"
+            if [[ -n "${sound}" ]]; then
+                play_custom_sound "${sound}"
+            fi
+        else
+            log "ERROR: notify-send not found. Install libnotify-bin."
+        fi
+        sleep "${interval}"
+    done
+}
+
+cmd_start() {
+    
+    load_config
+
+    if [[ $# -eq 0 && -z "$JSONFILE" ]]; then
+        echo "ERROR: missing json file argument for start subcommand"
+        exit
+    fi
+     
+    # parse options after 'start'
+    while getopts "h" opt; do
+        case "${opt}" in
+            h) usage; exit 0 ;;
+            \?) echo "Unknown option: -${OPTARG}" >&2; usage; exit 1 ;;
+            :) echo "Option -${OPTARG} requires an argument" >&2; exit 1 ;;
+        esac
+    done
+
+    if is_running; then
+        echo "${APP_NAME} is already running (PID $(cat "${PID_FILE}"))."
+        exit 0
+    fi
+    
+    echo "About to verify your file.."
+    if [[ "$1" != $(basename "$CONFIG_FILE") ]]; then
+        echo "Invalid Json File Name"
+        echo notifier service is stopped ..
+        sleep 0.5
+        exit
+    fi
+    IS_VALID=$(jq  '
+      (. | type == "object") and
+      (.messages | type == "array") and
+      (.interval | type == "number")
+    ' "$1" 2> /dev/null )
+    if [[ "$IS_VALID" == "false" ]]; then
+        echo "Invalid Json File format ..."
+        echo "notifier service is stopped"
+        exit
+    else
+        echo "✓ Your Json is Valid"
+    fi
+    
+    
+    save_config "$1"
+
+
+    echo "Your Json is saved"
+    sleep 1
+
+    INTERVAL=$(jq '.interval' "$JSONFILE")
+
+    nohup "$0" __daemon__ >/dev/null 2>>"${LOG_FILE}" &
+    local pid=$!
+    echo "${pid}" > "${PID_FILE}"
+    disown "${pid}" 2>/dev/null || true
+
+    echo "${APP_NAME} started (PID ${pid}). Notifications every ${INTERVAL}s."
+}
+
+cmd_exit() {
+    if is_running; then
+        local pid
+        pid="$(cat "${PID_FILE}")"
+        kill "${pid}" 2>/dev/null || true
+        # give it a moment, then force kill if needed
+        for _ in 1 2 3 4 5; do
+            kill -0 "${pid}" 2>/dev/null || break
+            sleep 0.2
+        done
+        kill -9 "${pid}" 2>/dev/null || true
+        rm -f "${PID_FILE}"
+        echo "${APP_NAME} stopped (PID ${pid})."
+    else
+        echo "${APP_NAME} is not running."
+        rm -f "${PID_FILE}"
+    fi
+}
+
+cmd_status() {
+    if is_running; then
+        load_config
+        echo "${APP_NAME} is running (PID $(cat "${PID_FILE}"))."
+    else
+        echo "${APP_NAME} is not running."
+    fi
+}
+cmd_logs(){
+    if [[ -e $LOG_FILE ]]; then
+        cat $LOG_FILE
+    else
+        echo "Log file is not set up"
+    fi
+}
+main() {
+    local cmd="${1:-}"
+    case "${cmd}" in
+        start)
+            shift
+            cmd_start "$@"
+            ;;
+        exit|stop)
+            cmd_exit
+            ;;
+        status)
+            cmd_status
+            ;;
+        logs)
+            cmd_logs
+            ;;
+        __daemon__)
+            # internal: actually run the loop (detached child)
+            load_config
+            daemon_loop
+            ;;
+        -h|--help|"")
+            usage
+            ;;
+        *)
+            echo "Unknown command: ${cmd}" >&2
+            usage
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"

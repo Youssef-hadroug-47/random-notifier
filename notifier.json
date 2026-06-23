@@ -1,0 +1,12 @@
+{
+    "interval":5,
+    "messages":[
+        {
+            "message":"assalamou alaykom",
+            "title":"greeting",
+            "sound":"/home/youssefhadroug/Downloads/سبحان الله (49).mp3"
+        }
+
+    ]
+
+}
