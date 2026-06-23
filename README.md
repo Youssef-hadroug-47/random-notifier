@@ -9,6 +9,7 @@
 
 extract [file](https://github.com/Youssef-hadroug-47/random-notifier/releases/tag/release) content and run install.sh and there you are 
 
+## Usage
 
 ```Usage
  notifier start [json-file]   Start the notification daemon
@@ -48,10 +49,11 @@ extract [file](https://github.com/Youssef-hadroug-47/random-notifier/releases/ta
 
 ## Useful Resources You Can Use
 ### Audio Example
-    > [Audio](https://github.com/Youssef-hadroug-47/random-notifier/releases/tag/release) you can use in your notifier.json 
+   Here some [Audio](https://github.com/Youssef-hadroug-47/random-notifier/releases/tag/release) you can use in your notifier.json 
 ### Json Generator Script
-    > use this [script](https://github.com/Youssef-hadroug-47/random-notifier/releases/tag/release) to generate your notifier.json
-    > pass the audio assets directory
+   use this [script](https://github.com/Youssef-hadroug-47/random-notifier/releases/tag/release) to generate your notifier.json
+   
+   pass the audio assets directory path and run python json-generator.py /path/to/audio
 
 ```python
     import json
