@@ -23,9 +23,8 @@ JSONFILE=""
 # ---- defaults (overridden by config file / CLI flags) ----
 DEFAULT_INTERVAL=3600          # seconds between notifications (1 hour)
 DEFAULT_TITLE="Reminder"
-DEFAULT_MESSAGE="This is your periodic reminder."
+DEFAULT_MESSAGE="Dhikr"
 DEFAULT_URGENCY="normal"       # low | normal | critical
-DEFAULT_ICON="dialog-information"
 DEFAULT_SOUND=""
 
 
@@ -48,12 +47,15 @@ Options for 'start':
 Json Format Example
 
     {
+        "default_message":"xxx" (default: "${DEFAULT_MESSAGE}"),
+        "default_title":"xxx" (default: "${DEFAULT_TITLE}"),
+        "default_urgency":"xxx" (default: "${DEFAULT_URGENCY}"),
         "interval":xxxx (default: "${DEFAULT_INTERVAL}"),
         "messages":[
             {
-                "message":"xxxx" (default: "${DEFAULT_MESSAGE}"),
-                "title":"xxxx" (default: "${DEFAULT_TITLE}"),
-                "urgency":"xxxx" (default: "${DEFAULT_URGENCY}"),
+                "message":"xxxx" ,
+                "title":"xxxx" ,
+                "urgency":"xxxx" ,
                 "sound":"Path/to/mp3" (default: "cinnamon default sound")
             },{
                 ...
@@ -134,11 +136,12 @@ play_custom_sound() {
     fi
  
     prev_state="$(gsettings get "${SOUND_SCHEMA}" "${SOUND_KEY}" 2>/dev/null || echo "true")"
- 
+    log $prev_state 
     # Always restore the original mute state, even if the player fails.
     gsettings set "${SOUND_SCHEMA}" "${SOUND_KEY}" false 2>/dev/null || true
+    log $(gsettings get "${SOUND_SCHEMA}" "${SOUND_KEY}") 
+    sleep 0.5
     "${player}" "${sound_path}" >> "${LOG_FILE}" || log "WARNING: ${player} failed to play ${sound_path}"
-    # sleep 2
     gsettings set "${SOUND_SCHEMA}" "${SOUND_KEY}" "${prev_state}" 2>/dev/null || true
 }
 
@@ -149,15 +152,30 @@ daemon_loop() {
     # Trap termination signals for clean shutdown/logging
     trap "log \"Daemon stopped\"; exit 0" SIGTERM SIGINT
       
+    local MESSAGES_LEN=$(jq '.messages | length' "$JSONFILE")
+    local interval=$(jq -r ".interval" "$JSONFILE")
+    if [[ $interval == "null" ]]; then
+        interval=$DEFAULT_INTERVAL
+    fi
+    local default_message=$(jq -r ".default_message" $JSONFILE)
+    if [[ "$default_message" != "null" ]]; then
+        DEFAULT_MESSAGE=$default_message
+    fi
+    local default_title=$(jq -r ".default_title" $JSONFILE)
+    if [[ "$default_title" != "null" ]]; then
+        DEFAULT_TITLE=$default_title
+    fi
+    local default_urgency=$(jq -r ".default_urgency" $JSONFILE)
+    if [[ "$default_urgency" != "null" ]]; then
+        DEFAULT_URGENCY=$default_urgency
+    fi
     while true; do
-        local MESSAGES_LEN=$(jq '.messages | length' "$JSONFILE")
+
         local random_int=$(( RANDOM % MESSAGES_LEN ))
         local element=$(jq --argjson random_int "$random_int" '.messages[$random_int]' "$JSONFILE")
-        local interval=$(jq -r ".interval" "$JSONFILE")
-        if [[ $interval == "null" ]]; then
-            interval=$DEFAULT_INTERVAL
-        fi
+
         local message=$(echo "$element" | jq -r ".message" )
+        log $message
         if [[ "$message" == "null" ]]; then
             message=$DEFAULT_MESSAGE
         fi
@@ -173,6 +191,7 @@ daemon_loop() {
         if [[ "$sound" == "null" ]]; then
             sound="$DEFAULT_SOUND"
         fi
+
         if command -v notify-send >/dev/null 2>&1; then
             notify-send -u "${urgency}" "${title}" "${message}"  \
                 || log "notify-send failed (no display/session?)"

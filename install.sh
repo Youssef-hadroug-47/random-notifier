@@ -13,6 +13,11 @@ if ! command -v notify-send >/dev/null 2>&1; then
     sudo apt-get update -y
     sudo apt-get install -y libnotify-bin
 fi
+if ! command -v jq > /dev/null 2>&1; then
+    echo "jq not found. Installing jq ..."
+    sudo apt-get update -y
+    sudo apt-get install -y jq
+fi
 
 echo "==> Installing notifier to ${BIN_DIR}"
 if [[ ! -e ${BIN_DIR} ]]; then

@@ -23,12 +23,15 @@ extract [file](https://github.com/Youssef-hadroug-47/random-notifier/releases/ta
  Json Format Example
 
     {
+        "default_message":"xxx" (default: Dhikr),
+        "default_title":"xxx" (default: Reminder),
+        "default_urgency":"xxx" (default: normal),
         "interval":xxxx (default: 3600),
         "messages":[
             {
-                "message":"xxxx" (default: Dhikr),
-                "title":"xxxx" (default: Dhikr"),
-                "urgency":"xxxx" (default: normal"),
+                "message":"xxxx",
+                "title":"xxxx",
+                "urgency":"xxxx",
                 "sound":"Path/to/mp3" (default: "cinnamon default sound")
             },{
                 ...
