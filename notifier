@@ -116,9 +116,6 @@ setup_display_env() {
 
 play_custom_sound() {
     local sound_path="$1"
-    local prev_state
-    SOUND_SCHEMA="org.cinnamon.sounds"
-    SOUND_KEY="notification-enabled"
 
     if [[ ! -f "${sound_path}" ]]; then
         log "WARNING: sound file not found: ${sound_path} (skipping custom sound)"
@@ -135,14 +132,8 @@ play_custom_sound() {
         return
     fi
  
-    prev_state="$(gsettings get "${SOUND_SCHEMA}" "${SOUND_KEY}" 2>/dev/null || echo "true")"
-    log $prev_state 
     # Always restore the original mute state, even if the player fails.
-    gsettings set "${SOUND_SCHEMA}" "${SOUND_KEY}" false 2>/dev/null || true
-    log $(gsettings get "${SOUND_SCHEMA}" "${SOUND_KEY}") 
-    sleep 0.5
     "${player}" "${sound_path}" >> "${LOG_FILE}" || log "WARNING: ${player} failed to play ${sound_path}"
-    gsettings set "${SOUND_SCHEMA}" "${SOUND_KEY}" "${prev_state}" 2>/dev/null || true
 }
 
 
